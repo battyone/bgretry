@@ -1,0 +1,18 @@
+sudo: false
+language: python
+python:
+  - "3.6"
+
+install:
+  - pip install -r test-requirements.txt
+  - pip install -e .
+
+script:
+  - pytest -v --cov=bgretry --cov-report term-missing
+  - flake8
+  - mypy --strict src/bgretry
+  - cd src
+  - mypy --strict ../test
+
+after_success:
+  - coveralls
