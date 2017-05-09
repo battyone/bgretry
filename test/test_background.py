@@ -26,7 +26,7 @@ def create_test_function(duration: float,
     return f, call_times
 
 
-def test_short_timeout() -> None:
+def test_timeout() -> None:
     f, call_times = create_test_function(100, ZeroDivisionError)
     fut = retry.add(f, timeout=1, start_wait_time=0.1, exceptions=[ZeroDivisionError])
     wait([fut])
@@ -36,7 +36,7 @@ def test_short_timeout() -> None:
         fut.result(timeout=0)
 
 
-def test_long_timeout() -> None:
+def test_success() -> None:
     f, call_times = create_test_function(0.5, ZeroDivisionError)
     fut = retry.add(f, timeout=2, start_wait_time=0.1, exceptions=[ZeroDivisionError])
     wait([fut])

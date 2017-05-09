@@ -5,51 +5,20 @@ import collections
 import functools
 import time
 from threading import Thread, Event, current_thread
-import heapq
-import itertools
-import uuid
 import enum
-from weakref import WeakKeyDictionary
 from concurrent.futures import Executor, ThreadPoolExecutor, CancelledError
 from typing import (
-    Any, Tuple, Generic, TypeVar, List, NewType, DefaultDict, Set, Optional, Union, Callable,
+    Any, List, NewType, DefaultDict, Set, Optional, Union, Callable,
     Dict, cast, Type, Deque, Iterable
 )
 
-TIMER_RESOLUTION = 1e-4  # 100 us
+from .pqueue import PriorityQueue
 
-T = TypeVar('T')
-P = TypeVar('P')
+TIMER_RESOLUTION = 1e-4  # 100 us
 
 # TODO: define type for time difference
 Time = float
 Duration = float
-
-
-# Ripped out from python heapq module docs, and
-# simplified by removing some features we don't need.
-class PriorityQueue(Generic[T, P]):
-    def __init__(self) -> None:
-        self.pq = []  # type: List[Tuple[P, int, T]]
-        self.counter = itertools.count()  # unique sequence count
-
-    def add_task(self, task: T, priority: P) -> None:
-        'Add new task.'
-        count = next(self.counter)
-        entry = (priority, count, task)
-        heapq.heappush(self.pq, entry)
-
-    def pop_task(self) -> Tuple[P, T]:
-        'Remove and return the lowest priority task. Raise IndexError if empty.'
-        priority, count, task = heapq.heappop(self.pq)
-        return priority, task
-
-    def peek(self) -> Tuple[P, T]:
-        priority, count, task = self.pq[0]
-        return priority, task
-
-    def __len__(self) -> int:
-        return len(self.pq)
 
 
 class Task:
@@ -58,7 +27,7 @@ class Task:
                  suggested_wait_time: Duration,
                  timeout_at: Time,
                  exceptions: List[Type[Exception]],
-                 executor: 'Retry',
+                 executor: 'RetryLoop',
                  name: str
                  ) -> None:
         self.function = function
@@ -218,7 +187,7 @@ class ScheduledWorker(Thread):
                     wait_event.event.set()
 
 
-class Retry:
+class RetryLoop:
     def __init__(self, default_timeout: Duration, default_start_wait_time: Duration) -> None:
         self.default_timeout = default_timeout
         if default_start_wait_time <= 0:
@@ -275,7 +244,7 @@ def wait(fs: Iterable[Task], timeout: Optional[Duration] = None) -> None:
             raise RuntimeError('Background thread died unexpectedly')
 
 
-retry = Retry(default_timeout=1, default_start_wait_time=0.001)
+retry = RetryLoop(default_timeout=1, default_start_wait_time=0.001)
 
 
 if sys.platform.startswith('win'):
