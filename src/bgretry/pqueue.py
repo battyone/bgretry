@@ -1,9 +1,10 @@
 import heapq
 import itertools
-from typing import Generic, Tuple, TypeVar
+from typing import Generic, Tuple, TypeVar, List
 
 T = TypeVar('T')
 P = TypeVar('P')
+
 
 # Ripped out from python heapq module docs, and
 # simplified by removing some features we don't need.
@@ -29,4 +30,3 @@ class PriorityQueue(Generic[T, P]):
 
     def __len__(self) -> int:
         return len(self.pq)
-

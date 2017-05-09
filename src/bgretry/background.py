@@ -39,6 +39,9 @@ class Task:
         self.status = None  # type: Optional[Status]
         self._result = None  # type: Any
         self._exception = None  # type: Optional[Exception]
+        # TODO: why deque? don't we call them all at once?
+        # do we need to separate to prevent too long of a wait?
+        # do we need to allow callback_after? otherwise how to build exponential backoff?
         self.done_callbacks = collections.deque()  # type: Deque[Callable[..., Any]]
 
     def cancel(self) -> None:
@@ -177,7 +180,7 @@ class ScheduledWorker(Thread):
                 if task.status != Status.RETRYING:
                     for fn in task.done_callbacks:
                         try:
-                            fn()
+                            fn(task)
                         except Exception as exc:
                             print(exc, file=sys.stderr, flush=True)
 
