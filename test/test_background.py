@@ -2,7 +2,7 @@ import time
 import pytest  # type: ignore
 from typing import Callable, Tuple, List, Type
 
-from bgretry import retry
+from bgretry import retry, wait
 
 
 def create_test_function(duration: float,
@@ -29,7 +29,7 @@ def create_test_function(duration: float,
 def test_short_timeout() -> None:
     f, call_times = create_test_function(100, ZeroDivisionError)
     fut = retry.add(f, timeout=1, start_wait_time=0.1, exceptions=[ZeroDivisionError])
-    time.sleep(2)
+    wait([fut])
     assert call_times == pytest.approx([0.0, 0.1, 0.3, 0.7, 1.0], abs=0.05)
     assert type(fut.exception(timeout=0)) == ZeroDivisionError
     with pytest.raises(ZeroDivisionError):
@@ -39,7 +39,7 @@ def test_short_timeout() -> None:
 def test_long_timeout() -> None:
     f, call_times = create_test_function(0.5, ZeroDivisionError)
     fut = retry.add(f, timeout=2, start_wait_time=0.1, exceptions=[ZeroDivisionError])
-    time.sleep(2)
+    wait([fut])
     assert call_times == pytest.approx([0.0, 0.1, 0.3, 0.7], abs=0.05)
     assert fut.exception(timeout=0) is None
     assert fut.result(timeout=0) == 42

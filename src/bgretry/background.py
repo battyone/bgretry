@@ -10,10 +10,10 @@ import itertools
 import uuid
 import enum
 from weakref import WeakKeyDictionary
-from concurrent.futures import Executor, Future, ThreadPoolExecutor, CancelledError
+from concurrent.futures import Executor, ThreadPoolExecutor, CancelledError
 from typing import (
     Any, Tuple, Generic, TypeVar, List, NewType, DefaultDict, Set, Optional, Union, Callable,
-    Dict, cast, Type, Deque
+    Dict, cast, Type, Deque, Iterable
 )
 
 TIMER_RESOLUTION = 1e-4  # 100 us
@@ -58,14 +58,14 @@ class Task:
                  suggested_wait_time: Duration,
                  timeout_at: Time,
                  exceptions: List[Type[Exception]],
-                 loop: Thread,
+                 executor: 'Retry',
                  name: str
                  ) -> None:
         self.function = function
         self.suggested_wait_time = suggested_wait_time
         self.timeout_at = timeout_at
         self.exceptions = exceptions
-        self.loop = loop
+        self.executor = executor
         self.name = name
         self.status = None  # type: Optional[Status]
         self._result = None  # type: Any
@@ -125,33 +125,42 @@ class Status(enum.Enum):
     CANCELLED = object()
 
 
+class WaitEvent:
+    def __init__(self, tasks: List[Task]) -> None:
+        self.event = Event()
+        self.tasks = tasks
+
+
 class ScheduledWorker(Thread):
-    def __init__(self, mq):
-        # type: (Queue[Task]) -> None
+    def __init__(self, mq: 'Queue[Union[Task, WaitEvent]]') -> None:
         self.parent = current_thread()
         self.mq = mq
         super().__init__(name='Scheduled Worker')
         self.wakeup_times = PriorityQueue[Task, Time]()
+        self.wait_events = set()  # type: Set[WaitEvent]
 
     def run(self) -> None:
         while self.parent.is_alive() or self.wakeup_times or not self.mq.empty():  # type: ignore
             todo = []
 
-            task = None  # type: Optional[Task]
             # collect next message or wait until next timed task whichever happens first
             if self.wakeup_times:
-                wakeup_time, task = self.wakeup_times.peek()
+                wakeup_time, _ = self.wakeup_times.peek()
                 sleep_time = max(0, wakeup_time - time.perf_counter())  # type: Optional[Duration]
             else:
                 # prevent thread from staying alive forever after main thread dies
                 sleep_time = 3
             try:
-                task = self.mq.get(timeout=sleep_time)
+                msg = self.mq.get(timeout=sleep_time)  # type: Optional[Union[Task, WaitEvent]]
             except Empty:
-                task = None
+                msg = None
 
-            if task:
-                todo.append(task)
+            if isinstance(msg, Task):
+                todo.append(msg)
+            elif isinstance(msg, WaitEvent):
+                self.wait_events.add(msg)
+            else:
+                assert msg is None
 
             # we got CPU, let's check timed tasks regardless if we were woken up by msg or timer
 
@@ -203,6 +212,11 @@ class ScheduledWorker(Thread):
                         except Exception as exc:
                             print(exc, file=sys.stderr, flush=True)
 
+            # check if any wait_events can be released
+            for wait_event in self.wait_events:
+                if all(task.done() for task in wait_event.tasks):
+                    wait_event.event.set()
+
 
 class Retry:
     def __init__(self, default_timeout: Duration, default_start_wait_time: Duration) -> None:
@@ -210,7 +224,7 @@ class Retry:
         if default_start_wait_time <= 0:
             raise ValueError('default start wait time must be positive')
         self.default_start_wait_time = default_start_wait_time
-        self.mq = Queue()  # type: Queue[Task]
+        self.mq = Queue()  # type: Queue[Union[Task, WaitEvent]]
         self.thread = ScheduledWorker(self.mq)
         self.thread.start()
 
@@ -224,7 +238,7 @@ class Retry:
             timeout_at=time.perf_counter() + timeout,
             suggested_wait_time=start_wait_time,
             exceptions=exceptions,
-            loop=self.thread,
+            executor=self,
             name=name,
         )
         self.mq.put(task)
@@ -246,6 +260,19 @@ class Retry:
                             name=name
                             )
         return parse_and_add
+
+
+def wait(fs: Iterable[Task], timeout: Optional[Duration] = None) -> None:
+    if not fs:
+        return
+    executor = next(iter(fs)).executor
+    if any(f.executor != executor for f in fs):
+        raise NotImplementedError('can only wait on futures from the same background thread')
+    wait_event = WaitEvent(list(fs))
+    executor.mq.put(wait_event)
+    while not wait_event.event.wait(timeout=1):
+        if not executor.thread.is_alive():
+            raise RuntimeError('Background thread died unexpectedly')
 
 
 retry = Retry(default_timeout=1, default_start_wait_time=0.001)
